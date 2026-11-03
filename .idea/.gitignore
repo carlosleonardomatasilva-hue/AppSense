@@ -1,0 +1,27 @@
+# Default ignored files
+/shelf/
+/workspace.xml
+
+# Archivos de configuración local y credenciales
+local.properties
+secrets.properties
+
+# Archivos de compilación
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/librariesW
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+
+# Keystore local (Si se llega a usar para debug)
+*.jks
+*.keystore
