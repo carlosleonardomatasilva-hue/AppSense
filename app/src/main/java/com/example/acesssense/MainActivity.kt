@@ -73,6 +73,7 @@ import com.example.acesssense.ui.theme.Slate50
 import com.example.acesssense.ui.theme.Slate700
 import com.google.ai.client.generativeai.GenerativeModel
 import com.google.ai.client.generativeai.type.content
+import com.google.ai.client.generativeai.type.generationConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -80,6 +81,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import java.io.ByteArrayOutputStream
 import java.util.Locale
 import kotlin.coroutines.resume
 
@@ -148,6 +150,17 @@ fun isExitCommand(userSpeech: String): Boolean {
         "cerrar app", "salir de la app", "nos vemos"
     )
     return exitKeywords.any { speech.contains(it) }
+}
+
+fun isVisionRequired(userSpeech: String): Boolean {
+    val text = userSpeech.lowercase(Locale.getDefault())
+    val visionKeywords = listOf(
+        "qué es", "que es", "qué hay", "que hay", "mira", "ves", "veo", "frente",
+        "cámara", "camara", "color", "colores", "lee", "texto", "objeto", "objetos",
+        "qué tengo", "que tengo", "dime qué", "dime que", "qué veo", "que veo",
+        "describe", "marca", "lata", "producto", "entorno", "frente a mí", "frente a mi"
+    )
+    return visionKeywords.any { text.contains(it) }
 }
 
 class TtsHelper(context: Context) : TextToSpeech.OnInitListener {
@@ -270,6 +283,9 @@ class SttHelper(context: Context) {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-ES")
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+                // Detección rápida de silencio (800ms) para respuesta ultra rápida
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 800L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 600L)
             }
 
             val listener = object : RecognitionListener {
@@ -321,7 +337,7 @@ class SttHelper(context: Context) {
     }
 }
 
-fun Bitmap.scaleToMaxDimension(maxDimension: Int = 480): Bitmap {
+fun Bitmap.scaleToMaxDimension(maxDimension: Int = 320): Bitmap {
     val width = this.width
     val height = this.height
     if (width <= maxDimension && height <= maxDimension) return this
@@ -357,20 +373,25 @@ private val conversationHistory = mutableListOf<String>()
 private suspend fun generateInitialGreeting(userName: String): String {
     return withContext(Dispatchers.IO) {
         try {
+            val config = generationConfig {
+                temperature = 0.4f
+                maxOutputTokens = 50
+            }
             val generativeModel = GenerativeModel(
                 modelName = "gemini-3.5-flash-lite",
                 apiKey = BuildConfig.GEMINI_API_KEY,
+                generationConfig = config,
                 systemInstruction = content {
-                    text("Eres Skyte, un asistente personal digital masculino amigable que utiliza tecnología de Gemini para servir a $userName.")
+                    text("Eres Skyte, un asistente personal digital masculino amigable que sirve a $userName.")
                 }
             )
             val response = generativeModel.generateContent(
-                content { text("Saluda a $userName amigablemente al iniciar la aplicación en menos de 15 palabras.") }
+                content { text("Saluda a $userName amigablemente al iniciar la aplicación en menos de 10 palabras.") }
             )
-            response.text?.trim() ?: "¡Hola $userName! Soy Skyte, tu asistente digital. ¿En qué te puedo ayudar hoy?"
+            response.text?.trim() ?: "¡Hola $userName! Soy Skyte. ¿En qué te colaboro hoy?"
         } catch (e: Exception) {
             Log.e("GeminiAI", "Error generando saludo inicial", e)
-            "¡Hola $userName! Soy Skyte, tu asistente digital. ¿En qué te puedo ayudar hoy?"
+            "¡Hola $userName! Soy Skyte. ¿En qué te colaboro hoy?"
         }
     }
 }
@@ -378,15 +399,19 @@ private suspend fun generateInitialGreeting(userName: String): String {
 private suspend fun processUserQueryWithGemini(userQuery: String, bitmap: Bitmap?, userName: String): String {
     return withContext(Dispatchers.IO) {
         try {
+            val config = generationConfig {
+                temperature = 0.3f
+                maxOutputTokens = 80
+            }
             val generativeModel = GenerativeModel(
                 modelName = "gemini-3.5-flash-lite",
                 apiKey = BuildConfig.GEMINI_API_KEY,
+                generationConfig = config,
                 systemInstruction = content {
-                    text("Eres Skyte, un asistente personal digital masculino amigable que sirve a $userName. Responde a $userName de forma coherente, cercana, natural y muy concisa (máximo 15 a 20 palabras). Mantén el hilo de la conversación. Si la pregunta se refiere a lo que ve la cámara o qué hay al frente, utiliza la imagen para describir objetivamente los elementos.")
+                    text("Eres Skyte, un asistente personal digital masculino amigable que sirve a $userName. Responde a $userName de forma coherente, cercana, natural y muy concisa (máximo 15 a 20 palabras). Mantén el hilo de la conversación. Si la pregunta requiere ver el entorno o qué hay al frente, utiliza la imagen adjunta para describir objetivamente los elementos principales.")
                 }
             )
 
-            // Incluir historial de conversación para coherencia contextual continua
             val recentContext = conversationHistory.takeLast(6).joinToString("\n")
             val fullPrompt = if (recentContext.isNotBlank()) {
                 "Historial reciente:\n$recentContext\n\n$userName dice: $userQuery"
@@ -394,8 +419,11 @@ private suspend fun processUserQueryWithGemini(userQuery: String, bitmap: Bitmap
                 "$userName dice: $userQuery"
             }
 
+            val needsVision = isVisionRequired(userQuery)
+
             val inputContent = content {
-                if (bitmap != null) {
+                if (needsVision && bitmap != null) {
+                    // Solo adjuntar imagen ligera (320px) cuando la consulta del usuario requiere visión
                     image(bitmap)
                 }
                 text(fullPrompt)
@@ -403,7 +431,6 @@ private suspend fun processUserQueryWithGemini(userQuery: String, bitmap: Bitmap
             val response = generativeModel.generateContent(inputContent)
             val resultText = response.text?.trim() ?: "Entendido."
 
-            // Actualizar memoria conversacional
             conversationHistory.add("$userName: $userQuery")
             conversationHistory.add("Skyte: $resultText")
             if (conversationHistory.size > 10) {
@@ -617,7 +644,9 @@ fun PreviewScreen() {
 
                 dynamicContent = "$currentUserName: \"$userSpeech\""
 
-                val currentBitmap = previewViewInstance?.bitmap?.scaleToMaxDimension(480)
+                val currentBitmap = if (isVisionRequired(userSpeech)) {
+                    previewViewInstance?.bitmap?.scaleToMaxDimension(320)
+                } else null
 
                 dynamicContent = "Pensando..."
                 val responseText = processUserQueryWithGemini(userSpeech, currentBitmap, currentUserName)
@@ -627,7 +656,7 @@ fun PreviewScreen() {
                     ttsHelper.speakAndWait(responseText)
                 }
             } else {
-                delay(300L)
+                delay(200L)
             }
         }
     }
