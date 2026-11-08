@@ -103,6 +103,4 @@ systemInstruction = content {
 ---
 
 ## 5. Guía de Seguridad y Mantenimiento
-
-* **Protección de Clave de API**: La clave de API de Gemini se gestiona de forma segura mediante `local.properties` y el plugin `secrets-gradle-plugin`, manteniéndose fuera del control de versiones (`.gitignore`).
 * **Optimización de Cuota**: Al utilizar imágenes livianas (480px) y respuestas concisas (15-20 palabras), la aplicación consume aproximadamente 3 a 6 peticiones por minuto, operando perfectamente dentro de la capa gratuita de Google AI Studio (15 RPM / 1,500 RPD).
